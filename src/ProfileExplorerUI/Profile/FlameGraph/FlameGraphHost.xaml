@@ -33,6 +33,9 @@
       Command="local:CallTreeCommand.ChangeRootNode"
       Executed="ChangeRootNodeExecuted" />
     <CommandBinding
+      Command="local:CallTreeCommand.ExcludeNode"
+      Executed="ExcludeNodeExecuted" /> 
+    <CommandBinding
       Command="local:CallTreeCommand.MarkAllInstances"
       Executed="MarkAllInstancesExecuted" />
     <CommandBinding
@@ -163,6 +166,19 @@
               InputGestureText="Alt+Double-Click"
             IsEnabled="{Binding EnableSingleNodeActions}"
             ToolTip="Restrict the view to the function instance and its callees">
+            <MenuItem.Icon>
+              <Image
+                Width="16"
+                Height="16"
+                Source="{StaticResource RootIcon}" />
+            </MenuItem.Icon>
+          </MenuItem>
+          <MenuItem
+            Command="local:CallTreeCommand.ExcludeNode"
+            CommandTarget="{Binding Path=PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+            Header="Exclude node"
+            InputGestureText="Ctrl+Double-Click"
+            ToolTip="Remove current function from graph">
             <MenuItem.Icon>
               <Image
                 Width="16"

@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
 
@@ -585,9 +586,39 @@ public class FlameGraphRenderer {
     dc.Pop();
   }
 
+  private double GetExcludedWidth(FlameGraphNode node) {
+    double childScales = 0.0;
+    if (node.Children != null) {
+      List<FlameGraphNode> childGroups = new();
+      List<FlameGraphNode> nextRange = new();
+      childGroups.AddRange(node.Children);
+      while (childGroups.Count > 0) {
+        foreach (var child in childGroups) {
+          if (child.IsExcluded) {
+            childScales += ScaleNode(child);
+          }
+          if (child.Children != null)
+            nextRange.AddRange(child.Children);
+        }
+        childGroups.Clear();
+        childGroups.AddRange(nextRange);
+        nextRange.Clear();
+      }
+    }
+    return childScales;
+  }
+
   private void UpdateNodeLayout(FlameGraphNode node, double x, double y, bool redraw) {
     double width = ScaleNode(node);
-    node.Bounds = new Rect(x, y, width, nodeHeight_);
+
+    double childScales = GetExcludedWidth(node);
+
+    if (width >= childScales)
+      width -= childScales;
+    if (width < 0)
+      width = minVisibleRectWidth_;
+
+    node.Bounds = new Rect(x, y, node.IsExcluded ? minVisibleRectWidth_ * 2 : width, nodeHeight_);
     node.IsDummyNode = !redraw;
     node.IsHidden = false;
 
@@ -604,6 +635,10 @@ public class FlameGraphRenderer {
       return;
     }
 
+    if (node.IsExcluded) {
+      return;
+    }
+
     // Children are sorted by weight or time.
     UpdateChildrenNodeLayout(node, x, y);
   }
@@ -617,7 +652,14 @@ public class FlameGraphRenderer {
     // Note that currently startIndex is always 0.
     for (int i = 0; i < startIndex; i++) {
       var childNode = node.Children[i];
+      if (childNode.IsExcluded) {
+        x += minVisibleRectWidth_ * 2;
+        continue;
+      }
       double childWidth = flameGraph_.ScaleWeight(childNode);
+      childWidth -= GetExcludedWidth(childNode);
+      if (childWidth < 0)
+        childWidth = 0;
       x += childWidth;
     }
 
@@ -626,7 +668,15 @@ public class FlameGraphRenderer {
 
     for (int i = startIndex; i < stopIndex; i++) {
       var childNode = node.Children[i];
+      if (childNode.IsExcluded) {
+        UpdateNodeLayout(childNode, x, y + nodeHeight_, skippedChildren == 0);
+        x += minVisibleRectWidth_ * 2;
+        continue;
+      }
       double childWidth = flameGraph_.ScaleWeight(childNode);
+      childWidth -= GetExcludedWidth(childNode);
+      if (childWidth < 0)
+        childWidth = 0;
 
       if (skippedChildren == 0) {
         if (childWidth < minVisibleRectWidth_) {

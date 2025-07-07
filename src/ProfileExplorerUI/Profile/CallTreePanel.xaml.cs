@@ -45,6 +45,7 @@ public static class CallTreeCommand {
   // FlameGraph specific commands.
   public static readonly RoutedCommand EnlargeNode = new("EnlargeNode", typeof(FrameworkElement));
   public static readonly RoutedCommand ChangeRootNode = new("ChangeRootNode", typeof(FrameworkElement));
+  public static readonly RoutedCommand ExcludeNode = new("ExcludeNode", typeof(FrameworkElement));
   public static readonly RoutedCommand MarkAllInstances = new("MarkAllInstances", typeof(FrameworkElement));
   public static readonly RoutedCommand MarkInstance = new("MarkInstance", typeof(FrameworkElement));
   public static readonly RoutedCommand ClearMarkedNodes = new("ClearMarkedNodes", typeof(FrameworkElement));

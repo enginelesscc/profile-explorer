@@ -358,6 +358,17 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     }
   }
 
+  public void ExcludeNode(FlameGraphNode node, bool saveState = true) {
+    // Update the undo stack.
+    if (saveState) {
+      SaveCurrentState(FlameGraphStateKind.ChangeRootNode);
+    }
+
+    node.IsExcluded = !node.IsExcluded;
+    Redraw();
+    ResetWidth();
+  }
+
   public async Task RestorePreviousState() {
     if (!stateStack_.TryPop(out var state)) {
       return;
@@ -374,6 +385,11 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
         RootNodeCleared?.Invoke(this, EventArgs.Empty);
         await ChangeRootNode(state.Node, false);
         GraphViewer.RestoreFixedMarkedNodes();
+        break;
+      }
+      case FlameGraphStateKind.ExcludeNode: {
+        state.Node.IsExcluded = !state.Node.IsExcluded;
+        ExcludeNode(state.Node, false);
         break;
       }
       default: {
@@ -1190,6 +1206,12 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     }
   }
 
+  private void ExcludeNodeExecuted(object sender, ExecutedRoutedEventArgs e) {
+    if (GraphViewer.SelectedNode != null) {
+      ExcludeNode(GraphViewer.SelectedNode);
+    }
+  }
+
   private void MarkAllInstancesExecuted(object sender, ExecutedRoutedEventArgs e) {
     if (GraphViewer.SelectedNode != null &&
         GraphViewer.SelectedNode.HasFunction) {
@@ -1240,7 +1262,8 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
   private enum FlameGraphStateKind {
     Default,
     EnlargeNode,
-    ChangeRootNode
+    ChangeRootNode,
+    ExcludeNode
   }
 
   private class FlameGraphState {

@@ -50,6 +50,7 @@ public class FlameGraphNode : SearchableProfileItem, IEquatable<FlameGraphNode> 
   public TimeSpan Duration => EndTime - StartTime;
   public override string ModuleName =>
     CallTreeNode is {HasFunction: true} ? CallTreeNode.ModuleName : null;
+  public bool IsExcluded { get; set; }
 
   public bool IsDummyNodeOrChild {
     get {
@@ -255,7 +256,7 @@ public sealed class FlameGraph {
   }
 
   public double ScaleWeight(FlameGraphNode node) {
-    return node.Weight.Ticks * rootWeightReciprocal_;
+    return (node.Weight.Ticks * rootWeightReciprocal_);
   }
 
   public double ScaleExclusiveWeight(FlameGraphNode node) {
