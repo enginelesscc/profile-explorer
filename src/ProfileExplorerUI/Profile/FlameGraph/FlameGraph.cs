@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using ProfileExplorer.Core;
@@ -17,20 +18,30 @@ public class FlameGraphNode : SearchableProfileItem, IEquatable<FlameGraphNode> 
   internal const double MinVisibleWidth = 1;
   internal const int MaxTextParts = 3;
 
-  public FlameGraphNode(ProfileCallTreeNode callTreeNode, TimeSpan weight, int depth,
+  public FlameGraphNode(ProfileCallTreeNode callTreeNode, int depth,
                         FunctionNameFormatter funcNameFormatter) :
     base(funcNameFormatter) {
     CallTreeNode = callTreeNode;
-    Weight = weight;
     Depth = depth;
   }
 
+  public override TimeSpan Weight {
+    get {
+      TimeSpan weight = ExclusiveWeight;
+      if (Children != null) {
+        foreach (var child in Children) {
+          weight += child.Weight;
+        }
+      }
+      return weight;
+    }
+    set { }
+  }
   public virtual bool IsGroup => false;
   public ProfileCallTreeNode CallTreeNode { get; }
   public FlameGraphRenderer Owner { get; set; }
   public FlameGraphNode Parent { get; set; }
   public List<FlameGraphNode> Children { get; set; }
-  public TimeSpan ChildrenWeight { get; set; }
   public int Depth { get; set; }
   public HighlightingStyle Style { get; set; }
   public Brush TextColor { get; set; }
@@ -43,13 +54,13 @@ public class FlameGraphNode : SearchableProfileItem, IEquatable<FlameGraphNode> 
   public bool IsDummyNode { get; set; }
   public bool IsHidden { get; set; }
   public bool HasFunction => CallTreeNode != null;
-  public bool HasChildren => Children is {Count: > 0};
+  public bool HasChildren => Children is { Count: > 0 };
   public IRTextFunction Function => CallTreeNode?.Function;
   public TimeSpan StartTime { get; set; }
   public TimeSpan EndTime { get; set; }
   public TimeSpan Duration => EndTime - StartTime;
   public override string ModuleName =>
-    CallTreeNode is {HasFunction: true} ? CallTreeNode.ModuleName : null;
+    CallTreeNode is { HasFunction: true } ? CallTreeNode.ModuleName : null;
   public bool IsExcluded { get; set; }
 
   public bool IsDummyNodeOrChild {
@@ -113,19 +124,18 @@ public class FlameGraphNode : SearchableProfileItem, IEquatable<FlameGraphNode> 
   }
 
   protected override string GetFunctionName() {
-    return CallTreeNode is {HasFunction: true} ? CallTreeNode.FunctionName : null;
+    return CallTreeNode is { HasFunction: true } ? CallTreeNode.FunctionName : null;
   }
 }
 
 public sealed class FlameGraphGroupNode : FlameGraphNode {
   public FlameGraphGroupNode(FlameGraphNode parentNode, int startIndex,
-                             int replacedNodeCount, TimeSpan weight, int depth) :
-    base(null, weight, depth, null) {
+                             int replacedNodeCount, int depth) :
+    base(null, depth, null) {
     Parent = parentNode;
     ReplacedStartIndex = startIndex;
     ReplacedNodeCount = replacedNodeCount;
   }
-
   public override bool IsGroup => true;
   public int ReplacedNodeCount { get; }
   public int ReplacedStartIndex { get; }
@@ -240,18 +250,18 @@ public sealed class FlameGraph {
     return nodes;
   }
 
-  public void Build(ProfileCallTreeNode rootNode) {
+  public void Build(ProfileCallTreeNode rootNode, FlameGraphFilters filters) {
     if (rootNode == null) {
       // Make a dummy root node that hosts all real root nodes.
       RootWeight = CallTree.TotalRootNodesWeight;
-      var flameNode = CreateFlameGraphNode(null, RootWeight, 0);
-      RootNode = Build(flameNode, CallTree.RootNodes, 0);
+      var flameNode = CreateFlameGraphNode(null, 0);
+      RootNode = Build(flameNode, CallTree.RootNodes, 0, filters);
     }
     else {
       // Root node overriden (consider only a call tree subset).
       RootWeight = rootNode.Weight;
-      var flameNode = CreateFlameGraphNode(rootNode, rootNode.Weight, 0);
-      RootNode = Build(flameNode, rootNode.Children, 0);
+      var flameNode = CreateFlameGraphNode(rootNode, 0);
+      RootNode = Build(flameNode, rootNode.Children, 0, filters);
     }
   }
 
@@ -304,88 +314,36 @@ public sealed class FlameGraph {
     }
   }
 
-  private void AddSample(FlameGraphNode rootNode, ProfileSample sample, ResolvedProfileStack stack) {
-    var node = rootNode;
-    int depth = 0;
-
-    for (int k = stack.FrameCount - 1; k >= 0; k--) {
-      var resolvedFrame = stack.StackFrames[k];
-
-      if (resolvedFrame.FrameDetails.Function == null) {
-        continue;
-      }
-
-      FlameGraphNode targetNode = null;
-
-      if (node.HasChildren) {
-        for (int i = node.Children.Count - 1; i >= 0; i--) {
-          var child = node.Children[i];
-
-          if (!child.CallTreeNode.Function.Equals(resolvedFrame.FrameDetails.Function)) {
-            break; // Last func is different, stop and start a new stack.
-          }
-
-          if (sample.Time - child.EndTime < TimeSpan.FromMilliseconds(100)) {
-            targetNode = child; // Also start a new stack if nothing executed for a while.
-          }
-
-          break;
-        }
-      }
-
-      if (targetNode == null) {
-        var callNode = new ProfileCallTreeNode(resolvedFrame.FrameDetails.DebugInfo,
-                                               resolvedFrame.FrameDetails.Function,
-                                               null, node.CallTreeNode);
-        targetNode = new FlameGraphNode(callNode, TimeSpan.Zero, depth, nameFormatter_);
-        node.Children ??= new List<FlameGraphNode>();
-        node.Children.Add(targetNode);
-        targetNode.StartTime = sample.Time;
-        targetNode.EndTime = sample.Time + sample.Weight;
-        targetNode.Parent = node;
-      }
-      else {
-        targetNode.StartTime = TimeSpan.FromTicks(Math.Min(targetNode.StartTime.Ticks, sample.Time.Ticks));
-        targetNode.EndTime =
-          TimeSpan.FromTicks(Math.Max(targetNode.EndTime.Ticks, sample.Time.Ticks + sample.Weight.Ticks));
-      }
-
-      if (k > 0) {
-        node.ChildrenWeight += sample.Weight;
-      }
-      else {
-        node.Weight += sample.Weight;
-      }
-
-      targetNode.Weight += sample.Weight;
-      node = targetNode;
-      depth++;
-    }
-  }
-
   private FlameGraphNode Build(FlameGraphNode flameNode,
-                               ICollection<ProfileCallTreeNode> children, int depth) {
+                               ICollection<ProfileCallTreeNode> children, int depth, FlameGraphFilters filters) {
     if (children == null || children.Count == 0) {
       return flameNode;
     }
 
-    var sortedChildren = new List<ProfileCallTreeNode>(children.Count);
     var childrenWeight = TimeSpan.Zero;
+    var sortedChildren = new List<ProfileCallTreeNode>();
 
-    foreach (var child in children) {
+    foreach (var child in children)
       sortedChildren.Add(child);
-      childrenWeight += child.Weight;
-    }
 
     // Place nodes left to right based on weight, heaviest first.
     sortedChildren.Sort((a, b) => b.Weight.CompareTo(a.Weight));
 
     flameNode.Children = new List<FlameGraphNode>(children.Count);
-    flameNode.ChildrenWeight = childrenWeight;
 
     foreach (var child in sortedChildren) {
-      var childFlameNode = CreateFlameGraphNode(child, child.Weight, depth + 1);
-      var childNode = Build(childFlameNode, child.Children, depth + 1);
+      // filter modules
+      bool skip = false;
+      foreach (var filter in filters.FilteredModules) {
+        if (filter.Value == child.ModuleName) {
+          skip = true;
+          break;
+        }
+      }
+      if (skip)
+        continue;
+      var childFlameNode = CreateFlameGraphNode(child, depth + 1);
+      var childNode = Build(childFlameNode, child.Children, depth + 1, filters);
       childNode.Parent = flameNode;
       flameNode.Children.Add(childNode);
       child.Tag = childFlameNode; // Quick mapping between call tree and flame graph node.
@@ -394,8 +352,8 @@ public sealed class FlameGraph {
     return flameNode;
   }
 
-  private FlameGraphNode CreateFlameGraphNode(ProfileCallTreeNode callTreeNode, TimeSpan weight, int depth) {
-    var flameNode = new FlameGraphNode(callTreeNode, weight, depth, nameFormatter_);
+  private FlameGraphNode CreateFlameGraphNode(ProfileCallTreeNode callTreeNode, int depth) {
+    var flameNode = new FlameGraphNode(callTreeNode, depth, nameFormatter_);
 
     if (callTreeNode != null) {
       flameNode.ExclusiveWeight = callTreeNode.ExclusiveWeight;

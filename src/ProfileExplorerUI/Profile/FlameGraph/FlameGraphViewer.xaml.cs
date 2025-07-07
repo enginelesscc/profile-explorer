@@ -254,7 +254,7 @@ public partial class FlameGraphViewer : FrameworkElement {
   }
 
   public async Task Initialize(ProfileCallTree callTree, ProfileCallTreeNode rootNode,
-                               Rect visibleArea, FlameGraphSettings settings, ISession session,
+                               Rect visibleArea, FlameGraphSettings settings, FlameGraphFilters filters, ISession session,
                                bool isTimelineView = false, int threadId = -1) {
     if (initialized_) {
       Reset();
@@ -269,14 +269,14 @@ public partial class FlameGraphViewer : FrameworkElement {
       // await Task.Run(() => flameGraph_.BuildTimeline(Session.ProfileData, threadId));
     }
     else {
-      await Task.Run(() => flameGraph_.Build(rootNode));
+      await Task.Run(() => flameGraph_.Build(rootNode, filters));
     }
 
     settings_ = settings;
     ReloadSettings();
 
     // Create the rendered and add the drawing surface as a child control.
-    renderer_ = new FlameGraphRenderer(flameGraph_, visibleArea, settings);
+    renderer_ = new FlameGraphRenderer(flameGraph_, visibleArea, settings, filters);
     renderer_.SelectedNodes = selectedNodes_;
     graphVisual_ = renderer_.Setup();
 
@@ -311,9 +311,9 @@ public partial class FlameGraphViewer : FrameworkElement {
     InvalidateVisual();
   }
 
-  public async Task Initialize(ProfileCallTree callTree, Rect visibleArea, FlameGraphSettings settings,
+  public async Task Initialize(ProfileCallTree callTree, Rect visibleArea, FlameGraphSettings settings, FlameGraphFilters filters,
                                ISession session, bool isTimelineView = false, int threadId = -1) {
-    await Initialize(callTree, null, visibleArea, settings, session, isTimelineView, threadId);
+    await Initialize(callTree, null, visibleArea, settings, filters, session, isTimelineView, threadId);
   }
 
   public void UpdateMaxWidth(double maxWidth) {

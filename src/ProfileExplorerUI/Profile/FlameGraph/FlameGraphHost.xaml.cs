@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,6 +12,8 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Microsoft.Diagnostics.Tracing.Stacks;
+using Microsoft.VisualBasic;
 using ProfileExplorer.Core;
 using ProfileExplorer.UI.Controls;
 
@@ -45,6 +48,7 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
   private double zoomPointX_;
   private bool enableSingleNodeActions_;
   private List<(ProfileCallTreeNode Node, HighlightingStyle Style)> unmatchedMarkedNodes_;
+  private FlameGraphFilters filters_;
 
   public FlameGraphHost() {
     InitializeComponent();
@@ -53,6 +57,7 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     SetupEvents();
     DataContext = this;
     ShowNodePanel = true;
+    filters_ = new();
   }
 
   public ISession Session { get; set; }
@@ -254,7 +259,7 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     callTree_ = callTree;
 
     if (callTree_ != null) {
-      await GraphViewer.Initialize(callTree, GraphArea, settings_, Session);
+      await GraphViewer.Initialize(callTree, GraphArea, settings_, filters_, Session);
       ResetWidth();
 
       if (markedNodes != null) {
@@ -272,7 +277,7 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     callTree_ = callTree;
 
     if (callTree != null && !GraphViewer.IsInitialized) {
-      await GraphViewer.Initialize(callTree, GraphArea, settings_, Session, true, threadId);
+      await GraphViewer.Initialize(callTree, GraphArea, settings_, filters_, Session, true, threadId);
     }
   }
 
@@ -350,7 +355,7 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     SetHorizontalOffset(0);
     rootNode_ = node;
     await GraphViewer.Initialize(GraphViewer.FlameGraph.CallTree, node.CallTreeNode,
-                                 GraphHostBounds, settings_, Session);
+                                 GraphHostBounds, settings_, filters_, Session);
     GraphViewer.RestoreFixedMarkedNodes();
 
     if (node.HasFunction) {
@@ -361,11 +366,60 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
   public void ExcludeNode(FlameGraphNode node, bool saveState = true) {
     // Update the undo stack.
     if (saveState) {
-      SaveCurrentState(FlameGraphStateKind.ChangeRootNode);
+      SaveCurrentState(FlameGraphStateKind.ExcludeNode, node);
     }
 
     node.IsExcluded = !node.IsExcluded;
     Redraw();
+    ResetWidth();
+  }
+
+  public async Task ExcludeModule(FlameGraphNode node, bool saveState = true) {
+    // Update the undo stack.
+    if (saveState) {
+      SaveCurrentState(FlameGraphStateKind.ExcludeModule, node);
+    }
+
+    if (node is not null) {
+      bool found = false;
+      foreach (var filterInfo in filters_.FilteredModules) {
+        if (filterInfo.Value == node.ModuleName) {
+          found = true;
+          filters_.FilteredModules.Remove(filterInfo);
+          break;
+        }
+      }
+      if (!found)
+        filters_.FilteredModules.Add(new FlameGraphFilters.FilterInfo<string>() { Depth = node.Depth + 1, Value = node.ModuleName });
+    }
+
+    node.IsExcluded = !node.IsExcluded;
+    await GraphViewer.Initialize(callTree_, GraphArea, settings_, filters_, Session);
+    GraphViewer.RestoreFixedMarkedNodes();
+    ResetWidth();
+  }
+
+  public async Task ExcludeModuleAny(FlameGraphNode node, bool saveState = true) {
+    // Update the undo stack.
+    if (saveState) {
+      SaveCurrentState(FlameGraphStateKind.ExcludeModuleAny, node);
+    }
+
+    if (node is not null) {
+      bool found = false;
+      foreach (var filterInfo in filters_.FilteredModules) {
+        if (filterInfo.Value == node.ModuleName) {
+          found = true;
+          filters_.FilteredModules.Remove(filterInfo);
+          break;
+        }
+      }
+      const int minDepth = 4;
+      if (!found)
+        filters_.FilteredModules.Add(new FlameGraphFilters.FilterInfo<string>() { Depth = minDepth, Value = node.ModuleName });
+    }
+
+    await GraphViewer.Initialize(callTree_, GraphArea, settings_, filters_, Session);
     ResetWidth();
   }
 
@@ -390,6 +444,14 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
       case FlameGraphStateKind.ExcludeNode: {
         state.Node.IsExcluded = !state.Node.IsExcluded;
         ExcludeNode(state.Node, false);
+        break;
+      }
+      case FlameGraphStateKind.ExcludeModule: {
+        await ExcludeModule(state.Node, false);
+        break;
+      }
+      case FlameGraphStateKind.ExcludeModuleAny: {
+        await ExcludeModuleAny(state.Node, false);
         break;
       }
       default: {
@@ -794,7 +856,7 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     }
   }
 
-  private void SaveCurrentState(FlameGraphStateKind changeKind) {
+  private void SaveCurrentState(FlameGraphStateKind changeKind, FlameGraphNode node = null) {
     var state = new FlameGraphState {
       Kind = changeKind,
       MaxGraphWidth = GraphViewer.MaxGraphWidth,
@@ -809,6 +871,12 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
       }
       case FlameGraphStateKind.ChangeRootNode: {
         state.Node = GraphViewer.FlameGraph.RootNode;
+        break;
+      }
+      case FlameGraphStateKind.ExcludeNode:
+      case FlameGraphStateKind.ExcludeModule:
+      case FlameGraphStateKind.ExcludeModuleAny: {
+        state.Node = node;
         break;
       }
     }
@@ -1212,6 +1280,18 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     }
   }
 
+  private async  void ExcludeModuleExecuted(object sender, ExecutedRoutedEventArgs e) {
+    if (GraphViewer.SelectedNode != null) {
+      await ExcludeModule(GraphViewer.SelectedNode);
+    }
+  }
+
+  private async void ExcludeModuleAnyExecuted(object sender, ExecutedRoutedEventArgs e) {
+    if (GraphViewer.SelectedNode != null) {
+      await ExcludeModuleAny(GraphViewer.SelectedNode);
+    }
+  }
+
   private void MarkAllInstancesExecuted(object sender, ExecutedRoutedEventArgs e) {
     if (GraphViewer.SelectedNode != null &&
         GraphViewer.SelectedNode.HasFunction) {
@@ -1263,7 +1343,9 @@ public partial class FlameGraphHost : UserControl, IFunctionProfileInfoProvider,
     Default,
     EnlargeNode,
     ChangeRootNode,
-    ExcludeNode
+    ExcludeNode,
+    ExcludeModule,
+    ExcludeModuleAny
   }
 
   private class FlameGraphState {

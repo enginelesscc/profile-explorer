@@ -9,12 +9,16 @@ using System.Windows.Media;
 namespace ProfileExplorer.UI.Profile;
 
 public class FlameGraphRenderer {
+
+  private const double excludedItemWidth = 0;
+
   private const double DefaultTextSize = 12;
   private const double DefaultNodeHeight = 18;
   private const double CompactTextSize = 11;
   private const double CompactNodeHeight = 15;
   private const string FontName = "Segoe UI";
   private FlameGraphSettings settings_;
+  private FlameGraphFilters filters_;
   private FlameGraph flameGraph_;
   private int maxNodeDepth_;
   private uint renderVersion_;
@@ -49,8 +53,9 @@ public class FlameGraphRenderer {
   private SolidColorBrush nodePercentageBrush_;
   private SolidColorBrush searchResultMarkingBrush_;
 
-  public FlameGraphRenderer(FlameGraph flameGraph, Rect visibleArea, FlameGraphSettings settings) {
+  public FlameGraphRenderer(FlameGraph flameGraph, Rect visibleArea, FlameGraphSettings settings, FlameGraphFilters filters) {
     settings_ = settings;
+    filters_ = filters;
     flameGraph_ = flameGraph;
     maxWidth_ = visibleArea.Width;
     prevMaxWidth_ = maxWidth_;
@@ -497,7 +502,9 @@ public class FlameGraphRenderer {
   }
 
   private double ScaleNode(FlameGraphNode node) {
-    return flameGraph_.ScaleWeight(node);
+    double selfWidth = flameGraph_.ScaleWeight(node);
+    double hideWidth = 0.0f; // GetExcludedWidth(node);
+    return Math.Max(0.0, selfWidth - hideWidth);
   }
 
   private bool DrawDummyNodes(DrawingContext graphDC, bool layoutChanged) {
@@ -586,39 +593,8 @@ public class FlameGraphRenderer {
     dc.Pop();
   }
 
-  private double GetExcludedWidth(FlameGraphNode node) {
-    double childScales = 0.0;
-    if (node.Children != null) {
-      List<FlameGraphNode> childGroups = new();
-      List<FlameGraphNode> nextRange = new();
-      childGroups.AddRange(node.Children);
-      while (childGroups.Count > 0) {
-        foreach (var child in childGroups) {
-          if (child.IsExcluded) {
-            childScales += ScaleNode(child);
-          }
-          if (child.Children != null)
-            nextRange.AddRange(child.Children);
-        }
-        childGroups.Clear();
-        childGroups.AddRange(nextRange);
-        nextRange.Clear();
-      }
-    }
-    return childScales;
-  }
-
   private void UpdateNodeLayout(FlameGraphNode node, double x, double y, bool redraw) {
-    double width = ScaleNode(node);
-
-    double childScales = GetExcludedWidth(node);
-
-    if (width >= childScales)
-      width -= childScales;
-    if (width < 0)
-      width = minVisibleRectWidth_;
-
-    node.Bounds = new Rect(x, y, node.IsExcluded ? minVisibleRectWidth_ * 2 : width, nodeHeight_);
+    node.Bounds = new Rect(x, y, ScaleNode(node), nodeHeight_);
     node.IsDummyNode = !redraw;
     node.IsHidden = false;
 
@@ -653,13 +629,9 @@ public class FlameGraphRenderer {
     for (int i = 0; i < startIndex; i++) {
       var childNode = node.Children[i];
       if (childNode.IsExcluded) {
-        x += minVisibleRectWidth_ * 2;
         continue;
       }
-      double childWidth = flameGraph_.ScaleWeight(childNode);
-      childWidth -= GetExcludedWidth(childNode);
-      if (childWidth < 0)
-        childWidth = 0;
+      double childWidth = ScaleNode(childNode);
       x += childWidth;
     }
 
@@ -669,14 +641,10 @@ public class FlameGraphRenderer {
     for (int i = startIndex; i < stopIndex; i++) {
       var childNode = node.Children[i];
       if (childNode.IsExcluded) {
-        UpdateNodeLayout(childNode, x, y + nodeHeight_, skippedChildren == 0);
-        x += minVisibleRectWidth_ * 2;
         continue;
       }
-      double childWidth = flameGraph_.ScaleWeight(childNode);
-      childWidth -= GetExcludedWidth(childNode);
-      if (childWidth < 0)
-        childWidth = 0;
+
+      double childWidth = ScaleNode(childNode);
 
       if (skippedChildren == 0) {
         if (childWidth < minVisibleRectWidth_) {
@@ -705,7 +673,6 @@ public class FlameGraphRenderer {
 
   private FlameGraphNode CreateSmallWeightDummyNode(FlameGraphNode node, double x, double y,
                                                     int startIndex, int stopIndex, out int skippedChildren) {
-    var totalWeight = TimeSpan.Zero;
     double totalWidth = 0;
 
     // Collect all the child nodes that have a small weight
@@ -725,7 +692,6 @@ public class FlameGraphRenderer {
       }
 
       totalWidth += childWidth;
-      totalWeight += childNode.Weight;
       startTime = TimeSpan.FromTicks(Math.Min(startTime.Ticks, childNode.StartTime.Ticks));
       endTime = TimeSpan.FromTicks(Math.Max(endTime.Ticks, childNode.EndTime.Ticks));
       childNode.IsHidden = true;
@@ -739,7 +705,7 @@ public class FlameGraphRenderer {
 
     //? TODO: Use a pool for FlameGraphGroupNode instead of new (JIT_New dominates)
     var replacement = new Rect(x, y + nodeHeight_, totalWidth, nodeHeight_);
-    var dummyNode = new FlameGraphGroupNode(node, startIndex, skippedChildren, totalWeight, node.Depth);
+    var dummyNode = new FlameGraphGroupNode(node, startIndex, skippedChildren, node.Depth);
     dummyNode.IsDummyNode = true;
     dummyNode.Bounds = replacement;
     dummyNode.Style = PickDummyNodeStyle(node.Style);

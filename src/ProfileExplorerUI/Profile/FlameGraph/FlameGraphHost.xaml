@@ -34,7 +34,13 @@
       Executed="ChangeRootNodeExecuted" />
     <CommandBinding
       Command="local:CallTreeCommand.ExcludeNode"
-      Executed="ExcludeNodeExecuted" /> 
+      Executed="ExcludeNodeExecuted" />
+    <CommandBinding
+      Command="local:CallTreeCommand.ExcludeModule"
+      Executed="ExcludeModuleExecuted" />
+    <CommandBinding
+      Command="local:CallTreeCommand.ExcludeModuleAny"
+      Executed="ExcludeModuleAnyExecuted" />
     <CommandBinding
       Command="local:CallTreeCommand.MarkAllInstances"
       Executed="MarkAllInstancesExecuted" />
@@ -176,15 +182,20 @@
           <MenuItem
             Command="local:CallTreeCommand.ExcludeNode"
             CommandTarget="{Binding Path=PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-            Header="Exclude node"
-            InputGestureText="Ctrl+Double-Click"
-            ToolTip="Remove current function from graph">
-            <MenuItem.Icon>
-              <Image
-                Width="16"
-                Height="16"
-                Source="{StaticResource RootIcon}" />
-            </MenuItem.Icon>
+            Header="Toggle node exclusion"
+            ToolTip="Remove selected node from graph">
+          </MenuItem>
+          <MenuItem
+            Command="local:CallTreeCommand.ExcludeModule"
+            CommandTarget="{Binding Path=PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+            Header="Toggle module exclusion"
+            ToolTip="Remove selected module from graph">
+          </MenuItem>
+          <MenuItem
+            Command="local:CallTreeCommand.ExcludeModuleAny"
+            CommandTarget="{Binding Path=PlacementTarget, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+            Header="Toggle module exclusion (any depth)"
+            ToolTip="Remove selected module from graph">
           </MenuItem>
           <Separator />
           <MenuItem
