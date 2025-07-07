@@ -1782,7 +1782,7 @@ public partial class SectionPanel : ToolPanelControl, INotifyPropertyChanged {
           foreach (var counter in counters.Counters) {
             var counterInfo = profile.GetPerformanceCounter(counter.CounterId);
 
-            if (!counterInfo.IsMetric) {
+            if (counterInfo != null && !counterInfo.IsMetric) {
               var counterEx = new PerformanceCounterSetEx.PerformanceCounterValueEx {CounterId = counter.CounterId};
               counterEx.Value = counter.Value;
               counterEx.Label = ProfileDocumentMarker.FormatPerformanceCounter(counter.Value, counterInfo);
